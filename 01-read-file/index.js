@@ -3,10 +3,12 @@ const fs = require('fs');
 
 const filePath = path.join(__dirname, 'text.txt');
 
-fs.readFile(filePath, 'utf8', function(err, data) {
-  if (err) {
-    console.error(err);
-    return;
-  }
+const readStream = fs.createReadStream(filePath, { encoding: 'utf8' });
+
+readStream.on('data', (data) => {
   console.log(data);
+});
+
+readStream.on('error', (err) => {
+  console.error(err);
 });
