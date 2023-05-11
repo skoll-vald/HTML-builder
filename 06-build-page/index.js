@@ -1,90 +1,77 @@
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
+const glob = require('glob');
 
-// create project-dist directory if it doesn't exist
-const distDir = path.join(__dirname, 'project-dist');
-if (!fs.existsSync(distDir)) {
-  fs.mkdirSync(distDir);
+async function readFiles(dir) {
+  const files = await fs.readdir(dir);
+  return Promise.all(
+    files.map(async (file) => {
+      const filePath = path.join(dir, file);
+      const content = await fs.readFile(filePath, 'utf8');
+      console.log(`File: ${filePath}, Content: ${content}`);
+      return { name: file.replace('.html', ''), content };
+    })
+  );
 }
 
-// read the template file
-const templateFile = fs.readFileSync(path.join(__dirname, 'template.html'), 'utf-8');
-
-// read the components directory and get the contents of each file
-const componentsDir = path.join(__dirname, 'components');
-const componentFiles = fs.readdirSync(componentsDir);
-const components = {};
-componentFiles.forEach((file) => {
-  const filePath = path.join(componentsDir, file);
-  const stats = fs.statSync(filePath);
-  if (stats.isFile() && path.extname(file) === '.html') {
-    const componentName = path.basename(file, '.html');
-    components[componentName] = fs.readFileSync(filePath, 'utf-8');
+async function replaceTemplateTags(template, components) {
+  for (const component of components) {
+    const regex = new RegExp(`{{\\s*${component.name}\\s*}}`, 'g');
+    template = template.replace(regex, component.content);
+    console.log(`Matched tag: ${regex}, Content: ${component.content}`);
   }
-});
-
-// replace the template tags with the contents of the corresponding components
-let indexHtml = templateFile;
-Object.keys(components).forEach((componentName) => {
-  const tag = `{{${componentName}}}`;
-  const componentContent = components[componentName];
-  indexHtml = indexHtml.replace(tag, componentContent);
-});
-
-// write the index.html file
-const indexHtmlPath = path.join(distDir, 'index.html');
-fs.writeFileSync(indexHtmlPath, indexHtml);
-
-// concatenate the styles and write to style.css
-const stylesDir = path.join(__dirname, 'styles');
-const styleFiles = fs.readdirSync(stylesDir);
-let styleCss = '';
-styleFiles.forEach((file) => {
-  const filePath = path.join(stylesDir, file);
-  const stats = fs.statSync(filePath);
-  if (stats.isFile() && path.extname(file) === '.css') {
-    const fileContent = fs.readFileSync(filePath, 'utf-8');
-    styleCss += fileContent;
-  }
-});
-const styleCssPath = path.join(distDir, 'style.css');
-fs.writeFileSync(styleCssPath, styleCss);
-
-// copy the assets directory to project-dist/assets
-const assetsDir = path.join(__dirname, 'assets');
-const distAssetsDir = path.join(distDir, 'assets');
-
-if (!fs.existsSync(distAssetsDir)) {
-  fs.mkdirSync(distAssetsDir);
+  return template;
 }
 
-const assetFiles = fs.readdirSync(assetsDir);
+async function buildPage() {
+  const componentsPath = path.join(__dirname, 'components');
+  const stylesPath = path.join(__dirname, 'styles');
+  const assetsPath = path.join(__dirname, 'assets');
+  const templatePath = path.join(__dirname, 'template.html');
+  const distPath = path.join(__dirname, 'project-dist');
 
-assetFiles.forEach((file) => {
-  const srcPath = path.join(assetsDir, file);
-  const destPath = path.join(distAssetsDir, file);
-  const stats = fs.statSync(srcPath);
-
-  if (stats.isFile()) {
-    fs.copyFileSync(srcPath, destPath);
-  } else if (stats.isDirectory()) {
-    fs.mkdirSync(destPath, { recursive: true });
-    copyFolderRecursiveSync(srcPath, destPath);
-  }
-});
-
-function copyFolderRecursiveSync(src, dest) {
-  fs.readdirSync(src).forEach((file) => {
-    const srcPath = path.join(src, file);
-    const destPath = path.join(dest, file);
-    const stats = fs.statSync(srcPath);
-
-    if (stats.isFile()) {
-      fs.copyFileSync(srcPath, destPath);
-    } else if (stats.isDirectory()) {
-      fs.mkdirSync(destPath, { recursive: true });
-      copyFolderRecursiveSync(srcPath, destPath);
+  try {
+    await fs.mkdir(distPath);
+    console.log(`Created directory: ${distPath}`);
+  } catch (error) {
+    if (error.code !== 'EEXIST') {
+      console.error(error);
+      return;
     }
+  }
+
+  const template = await fs.readFile(templatePath, 'utf8');
+  const [components, styles] = await Promise.all([readFiles(componentsPath), readFiles(stylesPath)]);
+  const replacedContent = await replaceTemplateTags(template, components.flat());
+  console.log(replacedContent);
+  const indexFilePath = path.join(distPath, 'index.html');
+  await fs.writeFile(indexFilePath, replacedContent);
+  console.log(`Created file: ${indexFilePath}`);  
+  const styleFilePath = path.join(distPath, 'style.css');
+  const styleContent = styles.map((style) => style.content).join('\n');
+  await fs.writeFile(styleFilePath, styleContent);
+  console.log(`Created file: ${styleFilePath}`);
+
+  const assetsDistPath = path.join(distPath, 'assets');
+  try {
+    await fs.mkdir(assetsDistPath);
+    console.log(`Created directory: ${assetsDistPath}`);
+  } catch (error) {
+    if (error.code !== 'EEXIST') {
+      console.error(error);
+      return;
+    }
+  }
+
+  const assetsFiles = glob.sync(`${assetsPath}/**/*`, { nodir: true });
+  const copyPromises = assetsFiles.map(async (assetFile) => {
+    const assetName = path.relative(assetsPath, assetFile);
+    const assetDistPath = path.join(assetsDistPath, assetName);
+    await fs.mkdir(path.dirname(assetDistPath), { recursive: true });
+    await fs.copyFile(assetFile, assetDistPath);
+    console.log(`Copied file: ${assetDistPath}`);
   });
+  await Promise.all(copyPromises);
 }
 
+buildPage().then(() => console.log('Done!')).catch((error) => console.error(error));
