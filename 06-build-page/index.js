@@ -1,6 +1,5 @@
 const fs = require('fs').promises;
 const path = require('path');
-const glob = require('glob');
 
 async function readFiles(dir) {
   const files = await fs.readdir(dir);
@@ -21,6 +20,24 @@ async function replaceTemplateTags(template, components) {
     console.log(`Matched tag: ${regex}, Content: ${component.content}`);
   }
   return template;
+}
+
+async function copyAssets(sourceDir, targetDir) {
+  const files = await fs.readdir(sourceDir);
+  await Promise.all(
+    files.map(async (file) => {
+      const filePath = path.join(sourceDir, file);
+      const targetPath = path.join(targetDir, file);
+      const stat = await fs.stat(filePath);
+      if (stat.isDirectory()) {
+        await fs.mkdir(targetPath);
+        await copyAssets(filePath, targetPath);
+      } else {
+        await fs.copyFile(filePath, targetPath);
+        console.log(`Copied file: ${targetPath}`);
+      }
+    })
+  );
 }
 
 async function buildPage() {
@@ -46,7 +63,8 @@ async function buildPage() {
   console.log(replacedContent);
   const indexFilePath = path.join(distPath, 'index.html');
   await fs.writeFile(indexFilePath, replacedContent);
-  console.log(`Created file: ${indexFilePath}`);  
+  console.log(`Created file: ${indexFilePath}`);
+
   const styleFilePath = path.join(distPath, 'style.css');
   const styleContent = styles.map((style) => style.content).join('\n');
   await fs.writeFile(styleFilePath, styleContent);
@@ -63,15 +81,7 @@ async function buildPage() {
     }
   }
 
-  const assetsFiles = glob.sync(`${assetsPath}/**/*`, { nodir: true });
-  const copyPromises = assetsFiles.map(async (assetFile) => {
-    const assetName = path.relative(assetsPath, assetFile);
-    const assetDistPath = path.join(assetsDistPath, assetName);
-    await fs.mkdir(path.dirname(assetDistPath), { recursive: true });
-    await fs.copyFile(assetFile, assetDistPath);
-    console.log(`Copied file: ${assetDistPath}`);
-  });
-  await Promise.all(copyPromises);
+  await copyAssets(assetsPath, assetsDistPath);
 }
 
 buildPage().then(() => console.log('Done!')).catch((error) => console.error(error));
